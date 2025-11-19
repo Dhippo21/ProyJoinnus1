@@ -1,5 +1,7 @@
 ﻿using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using System.ComponentModel.DataAnnotations;
+using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -431,15 +433,151 @@ namespace WebApi.Controllers
                 _logger.LogError(ex, "Error en el proceso de restablecimiento de contraseña");
                 return StatusCode(500, new { message = "Error interno del servidor" });
             }
+
         }
 
-        public class ResetPasswordRequest
+        // Servicio: "Restablecer contraseña" (Fila 4)
+        [HttpPost("restablecer-contrasena")]
+        public async Task<IActionResult> RestablecerContrasena([FromBody] ResetPasswordDto dto)
+        {
+            // 1. Validar que las contraseñas coincidan 
+
+            // 2. Buscar al usuario por email
+            var usuario = await _context.Usuarios.FirstOrDefaultAsync(u => u.CorreoElectronico == dto.Email);
+            if (usuario == null) return NotFound("Usuario no encontrado.");
+
+
+
+            // 3. Actualizar la contraseña
+            usuario.ContrasenaHash = dto.NuevaContrasena;
+            _context.Entry(usuario).State = EntityState.Modified;
+            await _context.SaveChangesAsync();
+            return Ok("Contraseña actualizada con éxito.");
+        }
+
+        // Servicio: "Cambiar mi contraseña" (Fila 5)
+
+        [HttpPost("cambiar-contrasena")]
+        public async Task<IActionResult> CambiarContrasena([FromBody] ChangePasswordDto dto)
+        {
+
+            var idUsuario = User.FindFirstValue(ClaimTypes.NameIdentifier);
+            var usuario = await _context.Usuarios.FindAsync(1); // Simulado
+            if (usuario == null) return Unauthorized();
+
+
+            if (usuario.ContrasenaHash != dto.ContrasenaActual) // Simulación
+            {
+                return BadRequest("La contraseña actual es incorrecta.");
+            }
+
+            // 2. Actualizar contraseña
+            usuario.ContrasenaHash = dto.NuevaContrasena;
+            _context.Entry(usuario).State = EntityState.Modified;
+            await _context.SaveChangesAsync();
+            return Ok("Contraseña cambiada con éxito.");
+        }
+
+        // Servicio: "Solicitar activación autenticación en 2 pasos" (Fila 6)
+        // [Authorize]
+        [HttpPost("solicitar-2fa")]
+        public IActionResult SolicitarAutenticacion2Pasos()
+        {
+            return Ok("Se ha enviado un código de activación a su correo.");
+        }
+
+        // Servicio: "Activar autenticación en 2 pasos" (Fila 7)
+        // [Authorize]
+        [HttpPost("activar-2fa")]
+        public IActionResult ActivarAutenticacion2Pasos([FromBody] Activate2faDto dto)
+        {
+            if (dto.Codigo != "123456") // Simulación: validar el código
+            {
+                return BadRequest("El código de verificación es incorrecto.");
+            }
+            // ... Marcar la 2FA como activa para el usuario en la BD
+            return Ok("Autenticación en dos pasos activada con éxito.");
+        }
+
+        // Servicio: "Visualizar mis entradas" (Fila 9)
+        // [Authorize]
+        [HttpGet("mis-entradas")]
+        public async Task<IActionResult> GetMisEntradas()
+        {
+            // Simulación de usuario logueado
+            int idUsuario = 1;
+
+            var entradas = await _context.Entrada
+                .Include(e => e.IdDetalleNavigation.IdTipoEntradaNavigation)
+                .Include(e => e.IdDetalleNavigation.IdCompraNavigation.IdEventoNavigation.IdLugarNavigation)
+                .Where(e => e.IdDetalleNavigation.IdCompraNavigation.IdUsuario == idUsuario && e.Estado == "Activa")
+                .Select(e => new EntradaDetalles
+                {
+                    IdEntrada = e.IdEntrada,
+                    TituloEvento = e.IdDetalleNavigation.IdCompraNavigation.IdEventoNavigation.Titulo,
+                    FechaEvento = e.IdDetalleNavigation.IdCompraNavigation.IdEventoNavigation.FechaInicio,
+                    LugarEvento = e.IdDetalleNavigation.IdCompraNavigation.IdEventoNavigation.IdLugarNavigation.Nombre,
+                    TipoEntrada = e.IdDetalleNavigation.IdTipoEntradaNavigation.Nombre,
+                    CodigoQr = e.CodigoQr,
+                    Estado = e.Estado,
+                    IdCompra = e.IdDetalleNavigation.IdCompra
+                })
+                .ToListAsync();
+
+            return Ok(entradas);
+        }
+    }
+    public class ResetPasswordRequest
         {
             public string Token { get; set; }
             public string NuevaContrasena { get; set; }
             public string ConfirmacionContrasena { get; set; }
         }
+    public class Activate2faDto
+    {
+        [Required]
+        [StringLength(6, MinimumLength = 6, ErrorMessage = "El código debe tener 6 dígitos.")]
+        public string Codigo { get; set; }
     }
+    public class ResetPasswordDto
+    {
+        [Required]
+        public string Token { get; set; }
 
+        [Required]
+        [EmailAddress]
+        public string Email { get; set; } // Necesario para saber a qué usuario aplicar el token
 
+        [Required]
+        [MinLength(8)]
+        public string NuevaContrasena { get; set; }
+
+        [Required]
+        [Compare("NuevaContrasena", ErrorMessage = "Las contraseñas no coinciden.")]
+        public string ConfirmacionContrasena { get; set; }
+    }
+    public class EntradaDetalles
+    {
+        public int IdEntrada { get; set; }
+        public string TituloEvento { get; set; }
+        public DateTime FechaEvento { get; set; }
+        public string LugarEvento { get; set; }
+        public string TipoEntrada { get; set; }
+        public string CodigoQr { get; set; } // El QR a mostrar
+        public string Estado { get; set; } // "Activa", "Usada", "Cancelada"
+        public int IdCompra { get; set; }
+    }
+    public class ChangePasswordDto
+    {
+        [Required]
+        public string ContrasenaActual { get; set; }
+
+        [Required]
+        [MinLength(8)]
+        public string NuevaContrasena { get; set; }
+
+        [Required]
+        [Compare("NuevaContrasena", ErrorMessage = "Las contraseñas no coinciden.")]
+        public string ConfirmacionContrasena { get; set; }
+    }
 }
